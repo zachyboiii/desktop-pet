@@ -789,6 +789,102 @@ function bunnyFrames() {
 }
 
 // ---------------------------------------------------------------------------
+// Sparky — blocky flat-color mascot critter (chunky rectangular body/head,
+// small cutout eyes, nub ears, stubby legs). Always drawn front-on; "walk"
+// just shuffles by alternating which leg pair is lifted since the reference
+// has no clear side profile.
+// ---------------------------------------------------------------------------
+
+// Chevron eye (">" or "<") — three diagonal strokes meeting at a point,
+// used for the blink/happy expression instead of a closed-eye line.
+function chevron(g, tipX, tipY, dir, c) {
+  for (let i = 0; i < 3; i++) {
+    px(g, tipX + dir * i, tipY - i, c);
+    px(g, tipX + dir * i, tipY + i, c);
+  }
+}
+
+function sparkyBody(g, o) {
+  const bob = o.bob || 0;
+  const squash = o.squash || 0; // jump crouch(+)/stretch(-)
+  const rise = o.rise || 0; // airborne lift
+  
+  // Adjusted overall height from 25px to 20px to match the wider, chunkier mascot sticker
+  const bottom = 28 - rise; // feet baseline
+  const top = 8 + bob + squash * 2 - rise * 0; // block top; squash lowers it
+  const left = 3;
+  const W = 26;
+
+  // Main fused head/body block — one flat rectangle, flush top edge.
+  fillRect(g, left, top, W, bottom - top, BODY);
+
+  // Side tabs ("ears") flush with the top of the eyes (4x4).
+  const tabY = top + 4;
+  fillRect(g, left - 3, tabY, 3, 4, BODY);
+  fillRect(g, left + W, tabY, 3, 4, BODY);
+
+  // Legs: Shorter 5px cutouts so the 4 legs are chunky and stubby rather than spindly.
+  // Center gap is 1px lower than outer slots to match the reference sticker silhouette.
+  const legH = Math.max(2, 5 - squash - (o.tuck ? 2 : 0));
+  fillRect(g, left + 4, bottom - legH, 2, legH, T);      // left slot (width 2)
+  fillRect(g, left + 20, bottom - legH, 2, legH, T);     // right slot (width 2)
+  fillRect(g, left + 10, bottom - legH + 1, 6, legH - 1, T); // flat center gap (width 6)
+  
+  // Walking = alternating leg pairs pulled up a pixel
+  const legLift = o.legLift || [0, 0, 0, 0];
+  const legSpans = [
+    [left, 4],
+    [left + 6, 4],
+    [left + 16, 4],
+    [left + 22, 4],
+  ];
+  for (let i = 0; i < 4; i++) {
+    if (legLift[i]) fillRect(g, legSpans[i][0], bottom - legLift[i], legSpans[i][1], legLift[i], T);
+  }
+
+  outlinePass(g);
+
+  // Face: big square black eyes (4x4)
+  const ey = top + 4;
+  if (o.happy) {
+    // Flipped to > <
+    chevron(g, left + 6, ey + 1, -1, DARK);
+    chevron(g, left + W - 7, ey + 1, 1, DARK);
+  } else if (o.blink) {
+    fillRect(g, left + 4, ey + 1, 4, 1, DARK);
+    fillRect(g, left + W - 8, ey + 1, 4, 1, DARK);
+  } else {
+    fillRect(g, left + 4, ey, 4, 4, DARK);
+    fillRect(g, left + W - 8, ey, 4, 4, DARK);
+  }
+}
+
+function sparkyFrames() {
+  const draw = wrap(sparkyBody);
+  const walk = S8((i) => {
+    const lift = i % 2 === 0 ? [1, 0, 1, 0] : [0, 1, 0, 1];
+    return draw({ bob: i % 2, legLift: lift });
+  });
+  return {
+    idle: S8((i) => draw({ bob: i >= 3 && i <= 6 ? 1 : 0, blink: i === 6 })),
+    walk,
+    sit: S8((i) => draw({ squash: 2, blink: i === 5 })),
+    sleep: withSleepZsSlime(S8((i) => draw({ squash: 3 - (i >= 4 ? 1 : 0), blink: true }))),
+    jump: [
+      draw({ squash: 2 }), // crouch
+      draw({ squash: -1 }), // launch stretch
+      draw({ rise: 3, tuck: true }),
+      draw({ rise: 5, tuck: true, happy: true }),
+      draw({ rise: 5, tuck: true, happy: true }),
+      draw({ rise: 3 }),
+      draw({ squash: 2 }), // land squash
+      draw({}),
+    ],
+    look: S8((i) => draw({ bob: i >= 4 ? 1 : 0, happy: true })),
+  };
+}
+
+// ---------------------------------------------------------------------------
 // Slime (green) — squash & stretch blob, always front-facing
 // ---------------------------------------------------------------------------
 const SLIME_PALETTE = [
@@ -1073,9 +1169,22 @@ writeFileSync(
   composeSheet(withSleepZs(bunnyFrames()), BUNNY_PALETTE),
 );
 
+// Sparky: Claude's blocky terracotta mascot. Flat colors, no shading needed
+// beyond the standard outline/shade passes; eyes are pale cutouts.
+const SPARKY_PALETTE = makePalette("#1a0f0a", "#d2704a", "#f5ded0", "#a8542e", "#c8281e");
+writeFileSync(
+  join(OUT_DIR, "sparky_terracotta.png"),
+  composeSheet(sparkyFrames(), SPARKY_PALETTE),
+);
+
 console.log(
   "Wrote",
-  [...VARIANTS.map((v) => v.file), "slime_green.png", "bunny_white.png"].join(", "),
+  [
+    ...VARIANTS.map((v) => v.file),
+    "slime_green.png",
+    "bunny_white.png",
+    "sparky_terracotta.png",
+  ].join(", "),
   "to",
   OUT_DIR,
 );
