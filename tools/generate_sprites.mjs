@@ -562,6 +562,233 @@ function catFront(g, o) {
 }
 
 // ---------------------------------------------------------------------------
+// Bunny — round body, tall ears, hop-based walk (side view faces right)
+// ---------------------------------------------------------------------------
+
+// Capsule along a segment — bunny ears and extended hop legs.
+function capsule(g, x0, y0, x1, y1, r, c) {
+  const steps = Math.max(1, Math.ceil(Math.max(Math.abs(x1 - x0), Math.abs(y1 - y0))));
+  for (let i = 0; i <= steps; i++) {
+    const t = i / steps;
+    fillEllipse(g, x0 + (x1 - x0) * t, y0 + (y1 - y0) * t, r, r, c);
+  }
+}
+// Thin pink stripe painted inside an already-drawn ear capsule.
+function innerEar(g, x0, y0, x1, y1) {
+  const steps = 6;
+  for (let i = 0; i <= steps; i++) {
+    const t = i / steps;
+    paintOver(g, x0 + (x1 - x0) * t, y0 + (y1 - y0) * t, 0.1, 0.1, PINK);
+  }
+}
+
+function bunnySide(g, o) {
+  const bob = o.bob || 0;
+
+  if (o.lying) {
+    // Sleeping loaf: ears flopped back along the body, feet tucked under.
+    const ry = 3.5 + (o.breath || 0) * 0.5;
+    fillEllipse(g, 15, 29 - ry, 8.5, ry, BODY); // body loaf
+    fillEllipse(g, 23, 25.5, 4.5, 3.5, BODY); // head resting low
+    capsule(g, 20, 22.5, 13, 21, 1.4, BODY); // ears lying flat on the back
+    fillEllipse(g, 6.5, 25.5, 2, 2, BODY); // fluffy tail
+    outlinePass(g);
+    shadePass(g);
+    paintOver(g, 13.5, 21, 1.4, 1.4, SHADE); // grey ear tips
+    paintOver(g, 12, 26, 3.5, 2, SHADE); // grey haunch patch
+    fillRect(g, 25, 24, 2, 1, DARK); // closed eye
+    px(g, 27.5, 25.5, PINK); // nose
+    return;
+  }
+
+  const crouch = o.crouch ? 1 : 0;
+  const stretch = o.stretch ? 1 : 0;
+  const bodyCy = 23.5 + bob + crouch * 1 - stretch * 2;
+  const headCx = 21 + stretch * 2;
+  const headCy = 16 + (o.headBob ?? bob) + crouch * 2 - stretch * 3.5;
+  // ears sweep back when hopping
+  const eb = o.earBack ?? (crouch || stretch ? 3 : 0);
+  const twitch = o.earTwitch || 0;
+
+  // ears first so the head overlaps their base — near-vertical when calm
+  const backTip = [17.5 - eb - twitch, headCy - 10.5 + eb * 0.9 + twitch];
+  const frontTip = [21.5 - eb, headCy - 11.5 + eb];
+  capsule(g, 19, headCy - 3, backTip[0], backTip[1], 1.5, BODY);
+  capsule(g, 22.5, headCy - 3, frontTip[0], frontTip[1], 1.5, BODY);
+
+  fillEllipse(g, 6.5, bodyCy - 1.5, 2, 2, BODY); // fluffy tail
+
+  if (stretch) {
+    // Mid-leap: elongated body, front legs reaching, back legs trailing.
+    fillEllipse(g, 12, bodyCy + 0.5, 6, 4, BODY); // haunch
+    fillEllipse(g, 18, bodyCy - 0.5, 5, 3.5, BODY); // chest
+    capsule(g, 18.5, bodyCy + 2, 23, bodyCy + 5, 1.2, BODY); // front legs forward
+    capsule(g, 10, bodyCy + 3, 4.5, bodyCy + 5.5, 1.3, BODY); // back legs trailing
+  } else {
+    // Grounded: compact loaf — big haunch, low chest, flat back foot,
+    // front legs barely peeking out underneath.
+    fillRect(g, 16, bodyCy + 2, 2, Math.max(2, 29 - bodyCy - 1), BODY); // front legs
+    fillRect(g, 19, bodyCy + 2, 2, Math.max(2, 29 - bodyCy - 1), BODY);
+    fillRect(g, 8, 27.5, 6, 2.5, BODY); // big flat back foot
+    fillEllipse(g, 12.5, bodyCy, 6, 5 - crouch, BODY); // haunch
+    fillEllipse(g, 18, bodyCy + 0.5, 4.2, 4 - crouch * 0.5, BODY); // chest
+  }
+  fillEllipse(g, headCx, headCy, 5, 4.5, BODY); // head
+
+  outlinePass(g);
+  shadePass(g);
+
+  paintOver(g, backTip[0], backTip[1], 1.3, 1.3, SHADE); // grey ear tips
+  paintOver(g, frontTip[0], frontTip[1], 1.3, 1.3, SHADE);
+  innerEar(g, 22.5, headCy - 4.5, frontTip[0], frontTip[1] + 1.5);
+  paintOver(g, 11, bodyCy + 1, 2.6, 2, SHADE); // grey haunch patch
+  paintOver(g, 17.5, bodyCy + 2 - stretch, 2.5, 1.5, LIGHT); // belly
+
+  if (o.blink) {
+    fillRect(g, headCx + 1, headCy - 1, 2, 1, DARK);
+  } else {
+    fillRect(g, headCx + 1, headCy - 1.5, 2, 2, DARK);
+    px(g, headCx + 1, headCy - 1.5, WHITE);
+  }
+  px(g, headCx + 4.5, headCy + 0.5, PINK); // nose
+  px(g, headCx + 3.5, headCy + 2, OUT); // mouth
+  return;
+}
+
+function bunnySit(g, o) {
+  // Upright alert bunny — tall ears, paws tucked in front.
+  const hb = o.headBob || 0;
+  const sway = o.sway || 0;
+  const backTip = [16 + sway, 3 + hb];
+  const frontTip = [20 + sway, 2.5 + hb];
+  capsule(g, 17, 8 + hb, backTip[0], backTip[1] + 1, 1.5, BODY); // ears
+  capsule(g, 20.5, 7.5 + hb, frontTip[0], frontTip[1] + 1, 1.5, BODY);
+  fillEllipse(g, 7, 23, 2, 2, BODY); // tail
+  fillEllipse(g, 13, 23.5, 6, 5.5, BODY); // haunch
+  fillEllipse(g, 16, 20.5, 4, 5.5, BODY); // upright chest
+  fillRect(g, 15, 24, 2, 6, BODY); // front paws
+  fillRect(g, 19, 24, 2, 6, BODY);
+  fillEllipse(g, 18.5, 12 + hb, 5, 4.5, BODY); // head
+  outlinePass(g);
+  shadePass(g);
+  paintOver(g, backTip[0], backTip[1] + 1.2, 1.3, 1.5, SHADE); // grey ear tips
+  paintOver(g, frontTip[0], frontTip[1] + 1.2, 1.3, 1.5, SHADE);
+  innerEar(g, 20.5, 6 + hb, frontTip[0], frontTip[1] + 2);
+  paintOver(g, 11.5, 24.5, 2.6, 2, SHADE); // grey haunch patch
+  paintOver(g, 16, 22, 2, 2.6, LIGHT); // chest
+  if (o.blink) fillRect(g, 20, 11.5 + hb, 2, 1, DARK);
+  else {
+    fillRect(g, 20, 11 + hb, 2, 2, DARK);
+    px(g, 20, 11 + hb, WHITE);
+  }
+  px(g, 22.5, 13 + hb, PINK); // nose
+}
+
+function bunnyFront(g, o) {
+  // "look at you" pose — big head, both eyes, ears swaying.
+  const wag = o.wag || 0;
+  const hb = o.headBob || 0;
+  const hy = 13 + hb;
+  const lTip = [11.5 + wag, 1.5 + hb];
+  const rTip = [20.5 + wag, 1.5 + hb];
+  capsule(g, 12.5, hy - 6, lTip[0], lTip[1], 1.5, BODY); // ears
+  capsule(g, 19.5, hy - 6, rTip[0], rTip[1], 1.5, BODY);
+  fillEllipse(g, 16, 24, 6, 5, BODY); // body
+  fillRect(g, 12, 26, 2, 4, BODY); // front paws
+  fillRect(g, 18, 26, 2, 4, BODY);
+  fillEllipse(g, 16, hy, 6, 5.5, BODY); // head
+  outlinePass(g);
+  shadePass(g);
+  paintOver(g, lTip[0], lTip[1] + 1, 1.3, 1.5, SHADE); // grey ear tips
+  paintOver(g, rTip[0], rTip[1] + 1, 1.3, 1.5, SHADE);
+  innerEar(g, 12.5, hy - 7, lTip[0], lTip[1] + 2);
+  innerEar(g, 19.5, hy - 7, rTip[0], rTip[1] + 2);
+  paintOver(g, 16, 25.5, 3, 2.2, LIGHT); // belly
+  if (o.blink) {
+    fillRect(g, 12.5, hy - 1, 2, 1, DARK);
+    fillRect(g, 18.5, hy - 1, 2, 1, DARK);
+  } else {
+    fillRect(g, 12.5, hy - 1.5, 2, 2, DARK);
+    fillRect(g, 18.5, hy - 1.5, 2, 2, DARK);
+    px(g, 12.5, hy - 1.5, WHITE);
+    px(g, 18.5, hy - 1.5, WHITE);
+  }
+  px(g, 16, hy + 1.5, PINK); // nose
+  px(g, 15, hy + 3, DARK); // mouth
+  px(g, 17, hy + 3, DARK);
+  px(g, 10.5, hy + 1.5, PINK); // blush
+  px(g, 21.5, hy + 1.5, PINK);
+}
+
+// Shift a finished frame up by n pixels — airborne frames of the hop arc.
+function shiftUp(g, n) {
+  if (!n) return g;
+  const out = grid();
+  for (let y = n; y < G; y++) {
+    for (let x = 0; x < G; x++) out[(y - n) * G + x] = g[y * G + x];
+  }
+  return out;
+}
+
+function bunnyFrames() {
+  const side = wrap(bunnySide);
+  const sit = wrap(bunnySit);
+  const front = wrap(bunnyFront);
+  // Bunnies hop instead of trotting: gather -> leap arc -> land -> recover.
+  const hop = (poses, arc) => poses.map((p, i) => shiftUp(side(p), arc[i]));
+  return {
+    idle: S8((i) =>
+      side({
+        bob: i >= 3 && i <= 6 ? 1 : 0,
+        earTwitch: i === 2 ? 1 : 0,
+        blink: i === 6,
+      }),
+    ),
+    walk: hop(
+      [
+        { crouch: true },
+        { stretch: true },
+        { stretch: true },
+        { stretch: true },
+        { stretch: true },
+        { stretch: true },
+        { crouch: true },
+        {},
+      ],
+      [0, 0, 1, 3, 3, 1, 0, 0],
+    ),
+    sit: S8((i) =>
+      sit({
+        headBob: i >= 4 ? 1 : 0,
+        sway: wave(i, 1),
+        blink: i === 5,
+      }),
+    ),
+    sleep: S8((i) => side({ lying: true, breath: i >= 4 ? 1 : 0 })),
+    jump: hop(
+      [
+        { crouch: true },
+        { crouch: true },
+        { stretch: true },
+        { stretch: true },
+        { stretch: true },
+        { stretch: true },
+        { crouch: true },
+        {},
+      ],
+      [0, 0, 1, 4, 5, 3, 0, 0],
+    ),
+    look: S8((i) =>
+      front({
+        wag: i % 2 === 0 ? 1 : -1,
+        headBob: i >= 4 ? 1 : 0,
+        blink: i === 6,
+      }),
+    ),
+  };
+}
+
+// ---------------------------------------------------------------------------
 // Slime (green) — squash & stretch blob, always front-facing
 // ---------------------------------------------------------------------------
 const SLIME_PALETTE = [
@@ -838,9 +1065,17 @@ for (const v of VARIANTS) {
 // slime uses its own frame table; adapt slime() to painter form first
 writeFileSync(join(OUT_DIR, "slime_green.png"), composeSheet(slimeFrames(), SLIME_PALETTE));
 
+// Bunny: white coat with soft grey ear tips / haunch patch (uses its own
+// hop-based frame table rather than the four-legged walk cycle).
+const BUNNY_PALETTE = makePalette("#3b2e40", "#f3eff3", "#ffffff", "#b7abbd", "#c8281e");
+writeFileSync(
+  join(OUT_DIR, "bunny_white.png"),
+  composeSheet(withSleepZs(bunnyFrames()), BUNNY_PALETTE),
+);
+
 console.log(
   "Wrote",
-  [...VARIANTS.map((v) => v.file), "slime_green.png"].join(", "),
+  [...VARIANTS.map((v) => v.file), "slime_green.png", "bunny_white.png"].join(", "),
   "to",
   OUT_DIR,
 );

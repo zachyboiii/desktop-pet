@@ -12,6 +12,7 @@ const PETS = [
   { type: "dog", color: "cream", label: "Dog (cream puppy)" },
   { type: "dog", color: "husky", label: "Dog (husky)" },
   { type: "slime", color: "green", label: "Slime (green)" },
+  { type: "bunny", color: "white", label: "Bunny (white & grey)" },
 ];
 const ICON_ROLES = [
   { value: "mixed", label: "Mixed (stand on tops, blocked by sides)" },
