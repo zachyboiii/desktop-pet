@@ -1,0 +1,12 @@
+{
+  "petType": "dog",
+  "petColor": "brown",
+  "count": 1,
+  "speed": 1.5,
+  "width": 80,
+  "height": 80,
+  "useIconsAsPlatforms": true,
+  "iconRole": "mixed",
+  "iconScanIntervalMs": 1500,
+  "launchOnStartup": false
+}

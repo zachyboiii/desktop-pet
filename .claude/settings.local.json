@@ -1,0 +1,20 @@
+{
+  "permissions": {
+    "allow": [
+      "mcp__claude_ai_Higgsfield__models_explore",
+      "mcp__claude_ai_Higgsfield__generate_image",
+      "mcp__claude_ai_Higgsfield__show_plans_and_credits",
+      "mcp__claude_ai_Higgsfield__job_status",
+      "mcp__claude_ai_Higgsfield__remove_background",
+      "Bash(curl -sL \"https://d8j0ntlcm91z4.cloudfront.net/user_3FTpwEbiudlWoZpyVshRygdp77U/hf_20260622_063049_cf19253d-3f0c-4432-808f-014a90e4a712.png\" -o \"c:/Users/lkyza/OneDrive/Desktop/projects/desktop-pet/public/sprites/_shiba_bgremoved_test.png\")",
+      "PowerShell(node scripts/gen-sprites.mjs)",
+      "PowerShell($sp = \"C:\\\\Users\\\\lkyza\\\\AppData\\\\Local\\\\Temp\\\\claude\\\\c--Users-lkyza-OneDrive-Desktop-projects-desktop-pet\\\\fc27690b-978b-45aa-8c7f-02c8e8c033a0\\\\scratchpad\"; node \"$sp\\\\preview.mjs\" public\\\\sprites\\\\dog_brown.png \"$sp\\\\dog4x.png\" 3; node \"$sp\\\\preview.mjs\" public\\\\sprites\\\\cat_gray.png \"$sp\\\\cat4x.png\" 3; node \"$sp\\\\preview.mjs\" public\\\\sprites\\\\slime_green.png \"$sp\\\\slime4x.png\" 3)",
+      "PowerShell(node tools\\\\generate_sprites.mjs)",
+      "PowerShell(npx vite build 2>&1)",
+      "PowerShell(node tools/generate_sprites.mjs)",
+      "PowerShell(cargo check --manifest-path src-tauri/Cargo.toml 2>$null)",
+      "PowerShell(node tools/gen_icon.mjs)",
+      "PowerShell(cargo check --manifest-path src-tauri/Cargo.toml 2>$null; \"exit: $LASTEXITCODE\")"
+    ]
+  }
+}
