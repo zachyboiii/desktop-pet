@@ -275,19 +275,22 @@ fn launch_claude() -> Result<(), String> {
             }
         });
         let path = candidates[0];
-        std::process::Command::new("cmd")
-            .arg("/C")
+        // Start the session in the user's home directory, not wherever the
+        // pet app happens to run from.
+        let home = std::env::var("USERPROFILE").unwrap_or_else(|_| "C:\\".into());
+        let mut cmd = std::process::Command::new("cmd");
+        cmd.arg("/C")
             .raw_arg(format!("start \"Claude Code\" cmd /K \"{path}\""))
-            .creation_flags(CREATE_NO_WINDOW)
-            .spawn()
-            .map_err(|e| e.to_string())?;
+            .creation_flags(CREATE_NO_WINDOW);
+        cmd.current_dir(&home);
+        cmd.spawn().map_err(|e| e.to_string())?;
     }
     #[cfg(target_os = "macos")]
     {
         std::process::Command::new("osascript")
             .args([
                 "-e",
-                "tell application \"Terminal\" to do script \"claude\"",
+                "tell application \"Terminal\" to do script \"cd ~ && claude\"",
                 "-e",
                 "tell application \"Terminal\" to activate",
             ])
@@ -296,10 +299,12 @@ fn launch_claude() -> Result<(), String> {
     }
     #[cfg(all(unix, not(target_os = "macos")))]
     {
-        std::process::Command::new("x-terminal-emulator")
-            .args(["-e", "claude"])
-            .spawn()
-            .map_err(|e| e.to_string())?;
+        let mut cmd = std::process::Command::new("x-terminal-emulator");
+        cmd.args(["-e", "claude"]);
+        if let Some(home) = std::env::var_os("HOME") {
+            cmd.current_dir(home);
+        }
+        cmd.spawn().map_err(|e| e.to_string())?;
     }
     Ok(())
 }
