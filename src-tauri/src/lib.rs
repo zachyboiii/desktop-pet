@@ -83,13 +83,24 @@ fn is_desktop_active() -> bool {
 }
 
 #[tauri::command]
-fn set_autostart(app: AppHandle, enabled: bool) -> Result<(), String> {
+fn set_autostart(
+    app: AppHandle,
+    state: tauri::State<AppState>,
+    enabled: bool,
+) -> Result<(), String> {
     let mgr = app.autolaunch();
     if enabled {
-        mgr.enable().map_err(|e| e.to_string())
+        mgr.enable().map_err(|e| e.to_string())?;
     } else {
-        mgr.disable().map_err(|e| e.to_string())
+        mgr.disable().map_err(|e| e.to_string())?;
     }
+    // Persist the choice so startup can self-heal the OS entry (see setup).
+    let snapshot = {
+        let mut s = state.settings.lock().unwrap();
+        s.launch_on_startup = enabled;
+        s.clone()
+    };
+    settings::save(&app, &snapshot)
 }
 
 #[tauri::command]
@@ -117,6 +128,180 @@ fn hide_pet(app: AppHandle) {
     if let Some(w) = app.get_webview_window("pet-window") {
         let _ = w.hide();
     }
+}
+
+// One launchable app the user can pick for a pet's "open an app" action.
+#[derive(Clone, serde::Serialize)]
+struct AppEntry {
+    name: String,
+    path: String,
+}
+
+#[cfg(windows)]
+const CREATE_NO_WINDOW: u32 = 0x0800_0000; // hide helper cmd/where consoles
+
+// Recursively collect Start Menu .lnk shortcuts — the canonical "installed
+// apps" list on Windows. Launching the .lnk (not the target) preserves the
+// shortcut's working dir / args, so store & desktop apps both work.
+#[cfg(windows)]
+fn collect_lnks(dir: &std::path::Path, out: &mut Vec<AppEntry>) {
+    let Ok(entries) = std::fs::read_dir(dir) else { return };
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if path.is_dir() {
+            collect_lnks(&path, out);
+        } else if path
+            .extension()
+            .map(|e| e.eq_ignore_ascii_case("lnk"))
+            .unwrap_or(false)
+        {
+            if let Some(stem) = path.file_stem().and_then(|s| s.to_str()) {
+                let lower = stem.to_lowercase();
+                if lower.contains("uninstall") {
+                    continue;
+                }
+                out.push(AppEntry {
+                    name: stem.to_string(),
+                    path: path.to_string_lossy().into_owned(),
+                });
+            }
+        }
+    }
+}
+
+// Apps available on this machine, for the dashboard's app dropdown.
+#[tauri::command]
+fn list_apps() -> Vec<AppEntry> {
+    let mut apps = Vec::new();
+    #[cfg(windows)]
+    {
+        const SUFFIX: &str = r"Microsoft\Windows\Start Menu\Programs";
+        for base in ["APPDATA", "PROGRAMDATA"] {
+            if let Ok(dir) = std::env::var(base) {
+                collect_lnks(&std::path::Path::new(&dir).join(SUFFIX), &mut apps);
+            }
+        }
+    }
+    #[cfg(target_os = "macos")]
+    {
+        if let Ok(entries) = std::fs::read_dir("/Applications") {
+            for entry in entries.flatten() {
+                let path = entry.path();
+                if path.extension().map(|e| e == "app").unwrap_or(false) {
+                    if let Some(stem) = path.file_stem().and_then(|s| s.to_str()) {
+                        apps.push(AppEntry {
+                            name: stem.to_string(),
+                            path: path.to_string_lossy().into_owned(),
+                        });
+                    }
+                }
+            }
+        }
+    }
+    // Dedup by name (user Start Menu wins over the system one), then sort.
+    apps.sort_by(|a, b| a.name.to_lowercase().cmp(&b.name.to_lowercase()));
+    apps.dedup_by(|a, b| a.name.eq_ignore_ascii_case(&b.name));
+    apps
+}
+
+// Launch an app picked from list_apps (or a legacy free-text command),
+// detached, via the OS shell — the per-pet "open an app" click action.
+#[tauri::command]
+fn open_app(command: String) -> Result<(), String> {
+    let command = command.trim().to_string();
+    if command.is_empty() {
+        return Err("no app configured".into());
+    }
+    // Paths from the app picker need quoting or `start` splits them on spaces.
+    let is_path = std::path::Path::new(&command).exists();
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        let target = if is_path { format!("\"{command}\"") } else { command };
+        std::process::Command::new("cmd")
+            .arg("/C")
+            .raw_arg(format!("start \"\" {target}"))
+            .creation_flags(CREATE_NO_WINDOW)
+            .spawn()
+            .map_err(|e| e.to_string())?;
+    }
+    #[cfg(not(windows))]
+    {
+        let shell_cmd = if is_path {
+            format!("open \"{command}\"")
+        } else {
+            command
+        };
+        std::process::Command::new("sh")
+            .arg("-c")
+            .arg(&shell_cmd)
+            .spawn()
+            .map_err(|e| e.to_string())?;
+    }
+    Ok(())
+}
+
+// Hardcoded Sparky feature: open Claude Code in a terminal. Resolves the real
+// `claude` shim up front (via where.exe) instead of re-resolving inside a
+// nested cmd, and keeps the terminal open (/K) so any launch error is visible.
+#[tauri::command]
+fn launch_claude() -> Result<(), String> {
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        let out = std::process::Command::new("where")
+            .arg("claude")
+            .creation_flags(CREATE_NO_WINDOW)
+            .output()
+            .map_err(|e| e.to_string())?;
+        let text = String::from_utf8_lossy(&out.stdout);
+        let mut candidates: Vec<&str> = text
+            .lines()
+            .map(str::trim)
+            .filter(|l| !l.is_empty())
+            .collect();
+        if candidates.is_empty() {
+            return Err("Claude Code (`claude`) was not found on PATH".into());
+        }
+        // Prefer what cmd can execute directly: .exe, then .cmd/.bat, then rest.
+        candidates.sort_by_key(|p| {
+            let l = p.to_lowercase();
+            if l.ends_with(".exe") {
+                0
+            } else if l.ends_with(".cmd") || l.ends_with(".bat") {
+                1
+            } else {
+                2
+            }
+        });
+        let path = candidates[0];
+        std::process::Command::new("cmd")
+            .arg("/C")
+            .raw_arg(format!("start \"Claude Code\" cmd /K \"{path}\""))
+            .creation_flags(CREATE_NO_WINDOW)
+            .spawn()
+            .map_err(|e| e.to_string())?;
+    }
+    #[cfg(target_os = "macos")]
+    {
+        std::process::Command::new("osascript")
+            .args([
+                "-e",
+                "tell application \"Terminal\" to do script \"claude\"",
+                "-e",
+                "tell application \"Terminal\" to activate",
+            ])
+            .spawn()
+            .map_err(|e| e.to_string())?;
+    }
+    #[cfg(all(unix, not(target_os = "macos")))]
+    {
+        std::process::Command::new("x-terminal-emulator")
+            .args(["-e", "claude"])
+            .spawn()
+            .map_err(|e| e.to_string())?;
+    }
+    Ok(())
 }
 
 // ---------------------------------------------------------------------------
@@ -207,6 +392,14 @@ pub fn run() {
     let started_minimized = std::env::args().any(|a| a == "--minimized");
 
     tauri::Builder::default()
+        // Launching the exe again must NOT create a second app (and second
+        // pet); just surface the existing settings window instead.
+        .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
+            if let Some(w) = app.get_webview_window("dashboard") {
+                let _ = w.show();
+                let _ = w.set_focus();
+            }
+        }))
         .plugin(tauri_plugin_autostart::init(
             MacosLauncher::LaunchAgent,
             Some(vec!["--minimized"]),
@@ -216,6 +409,16 @@ pub fn run() {
 
             // Load persisted settings into shared state.
             let loaded = settings::load(&handle);
+
+            // Self-heal "launch on startup": re-registering rewrites the OS
+            // entry to point at THIS exe, so a stale path (e.g. registered by
+            // a dev build, or the app moved) can't boot a broken app. Release
+            // only — a dev build must never hijack the entry back to itself.
+            #[cfg(not(debug_assertions))]
+            if loaded.launch_on_startup {
+                let _ = app.autolaunch().enable();
+            }
+
             let interval = loaded.icon_scan_interval_ms;
             let pet_bounds = Arc::new(Mutex::new(Vec::<IconRect>::new()));
             app.manage(AppState {
@@ -250,6 +453,17 @@ pub fn run() {
 
             Ok(())
         })
+        // Closing the settings window only hides it. The same window (and its
+        // state) is re-shown by the tray or a relaunch, so every "new" settings
+        // view tracks the same pets instead of starting from scratch.
+        .on_window_event(|window, event| {
+            if window.label() == "dashboard" {
+                if let tauri::WindowEvent::CloseRequested { api, .. } = event {
+                    api.prevent_close();
+                    let _ = window.hide();
+                }
+            }
+        })
         .invoke_handler(tauri::generate_handler![
             get_settings,
             update_settings,
@@ -262,6 +476,9 @@ pub fn run() {
             show_dashboard,
             show_pet,
             hide_pet,
+            open_app,
+            list_apps,
+            launch_claude,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

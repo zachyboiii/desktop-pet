@@ -14,7 +14,8 @@
       "PowerShell(node tools/generate_sprites.mjs)",
       "PowerShell(cargo check --manifest-path src-tauri/Cargo.toml 2>$null)",
       "PowerShell(node tools/gen_icon.mjs)",
-      "PowerShell(cargo check --manifest-path src-tauri/Cargo.toml 2>$null; \"exit: $LASTEXITCODE\")"
+      "PowerShell(cargo check --manifest-path src-tauri/Cargo.toml 2>$null; \"exit: $LASTEXITCODE\")",
+      "PowerShell(npm run tauri build)"
     ]
   }
 }

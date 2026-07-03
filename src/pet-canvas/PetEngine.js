@@ -87,9 +87,18 @@ let settings = {
   speed: 1.5,
   width: 80,
   height: 80,
-  petType: "dog",
-  petColor: "brown",
-  count: 1,
+  // Roster of individual pets, each with its own sprite and click action:
+  // { id, petType, petColor, clickAction: "say"|"app", phrase, appCommand }
+  pets: [
+    {
+      id: "default",
+      petType: "dog",
+      petColor: "brown",
+      clickAction: "say",
+      phrase: "",
+      appCommand: "",
+    },
+  ],
 };
 
 export function setSettings(next) {
@@ -217,6 +226,11 @@ function animForState(state) {
 const rand = (min, max) => min + Math.random() * (max - min);
 const pickRandom = (arr) => arr[Math.floor(Math.random() * arr.length)];
 
+// Little reactions for hovering the cursor over a pet without clicking.
+const HOVER_EMOTES = [":D", ":)", "XD", "^_^", ":3", "o_o", "!", "♪"];
+const EMOTE_COOLDOWN_MS = 4000; // per pet, so wiggling the cursor doesn't spam
+const EMOTE_DURATION_MS = 1600;
+
 const ACTION_WEIGHTS = {
   WALKING_LEFT: 3,
   WALKING_RIGHT: 3,
@@ -270,7 +284,8 @@ export class DesktopPet {
     // AI / interaction timers (ms, performance.now based)
     this.nextDecisionAt = performance.now() + rand(800, 2000);
     this.lookUntil = 0;
-    this.bubble = null; // { text, expires }
+    this.bubble = null; // { text, expires, emote? }
+    this.nextEmoteAt = 0; // hover-emote cooldown
   }
 
   refreshFrameSize() {
@@ -363,6 +378,24 @@ export class DesktopPet {
 
   say(text) {
     this.bubble = { text, expires: performance.now() + 3500 };
+  }
+
+  // Hovering (no click): flash a little emote and, when not busy walking or
+  // airborne, turn to face the cursor. Rate-limited per pet.
+  emoteAtCursor(cursorX, now) {
+    if (this.state === "DRAGGING" || now < this.nextEmoteAt) return;
+    this.nextEmoteAt = now + EMOTE_COOLDOWN_MS;
+    // Don't stomp a real speech bubble that's still visible.
+    if (!this.bubble || this.bubble.expires <= now || this.bubble.emote) {
+      this.bubble = {
+        text: pickRandom(HOVER_EMOTES),
+        expires: now + EMOTE_DURATION_MS,
+        emote: true,
+      };
+    }
+    if (this.state === "IDLE" || this.state === "SIT" || this.state === "LOOKING") {
+      this.facing = cursorX < this.x + this.w / 2 ? -1 : 1;
+    }
   }
 
   // Sheet cell (row/col) of the frame currently on screen — mirrors draw().
@@ -581,6 +614,11 @@ export class PetEngine {
     // Called each frame with the current pet list so React can position bubbles
     // and Rust can be told the hit-boxes.
     this.onFrame = null;
+    // Called when a clicked pet's action is "open an app" / "launch Claude
+    // Code" (wired to the open_app / launch_claude Tauri commands by
+    // CanvasApp). Both receive the pet so failures can show as a bubble.
+    this.onOpenApp = null;
+    this.onLaunchClaude = null;
     // Drag bookkeeping: which pet is held, and where the press started (to
     // tell a click apart from a drag on release).
     this.draggedPet = null;
@@ -627,35 +665,33 @@ export class PetEngine {
     return this.getTopmostPetAt(cx, cy) ? "pointer" : "default";
   }
 
-  spritePathFor(s) {
-    return `/sprites/${s.petType}_${s.petColor}.png`;
-  }
-
-  // Spawn/trim pets to match the requested count.
-  syncPets(count) {
+  // Reconcile the live pets against the configured roster. Matching by config
+  // id keeps existing pets (and their positions) across settings changes; only
+  // genuinely new entries spawn, and removed entries despawn.
+  syncPets(petConfigs = getSettings().pets || []) {
     const s = getSettings();
-    const spriteKey = `${s.petType}_${s.petColor}`;
-    const sprite = this.loadSprite(this.spritePathFor(s));
-    while (this.pets.length < count) {
-      const x = rand(50, Math.max(60, window.innerWidth - 150));
-      this.pets.push(new DesktopPet(x, 0, sprite, spriteKey));
-    }
-    if (this.pets.length > count) {
-      this.pets.length = count; // splice off the tail (design.md §4 GC note)
-      // Don't keep dragging a pet that was just despawned.
-      if (this.draggedPet && !this.pets.includes(this.draggedPet)) {
-        this.draggedPet = null;
+    const byId = new Map(this.pets.map((p) => [p.config?.id, p]));
+    this.pets = petConfigs.map((cfg) => {
+      const spriteKey = `${cfg.petType}_${cfg.petColor}`;
+      const sprite = this.loadSprite(`/sprites/${spriteKey}.png`);
+      let pet = byId.get(cfg.id);
+      if (!pet) {
+        const x = rand(50, Math.max(60, window.innerWidth - 150));
+        pet = new DesktopPet(x, 0, sprite, spriteKey);
       }
-    }
-    // Update sprite ref + per-sprite anim map on existing pets if it changed.
-    for (const p of this.pets) {
-      p.spriteSheet = sprite;
-      p.spriteKey = spriteKey;
-      p.anim = animMapFor(spriteKey);
-      p.w = s.width;
-      p.h = s.height;
-      p.speed = s.speed;
-      p.refreshFrameSize();
+      pet.config = cfg;
+      pet.spriteSheet = sprite;
+      pet.spriteKey = spriteKey;
+      pet.anim = animMapFor(spriteKey);
+      pet.w = s.width;
+      pet.h = s.height;
+      pet.speed = s.speed;
+      pet.refreshFrameSize();
+      return pet;
+    });
+    // Don't keep dragging a pet that was just despawned.
+    if (this.draggedPet && !this.pets.includes(this.draggedPet)) {
+      this.draggedPet = null;
     }
   }
 
@@ -676,7 +712,12 @@ export class PetEngine {
 
   handleMouseMove(cx, cy) {
     const pet = this.draggedPet;
-    if (!pet) return;
+    if (!pet) {
+      // Hover without a click: let the pet under the cursor react.
+      const hovered = this.getTopmostPetAt(cx, cy);
+      if (hovered) hovered.emoteAtCursor(cx, performance.now());
+      return;
+    }
     if (Math.abs(cx - this.dragStart.x) > 4 || Math.abs(cy - this.dragStart.y) > 4) {
       this.dragMoved = true;
     }
@@ -688,10 +729,24 @@ export class PetEngine {
     if (!pet) return;
     this.draggedPet = null;
     if (!this.dragMoved) {
-      // A stationary press-and-release is a click: look + chatter (the pet
-      // never actually moved, so no drop physics needed).
+      // A stationary press-and-release is a click: look at the cursor, then
+      // run this pet's configured interaction (the pet never actually moved,
+      // so no drop physics needed).
       pet.lookAt(cx);
-      if (this.phrases.length) pet.say(pickRandom(this.phrases));
+      const cfg = pet.config || {};
+      // Sparky is hardcoded: clicking the Claude mascot always opens Claude
+      // Code in a terminal, whatever an old config says.
+      if (cfg.petType === "sparky" || cfg.clickAction === "claude") {
+        if (cfg.phrase) pet.say(cfg.phrase);
+        if (this.onLaunchClaude) this.onLaunchClaude(pet);
+      } else if (cfg.clickAction === "app" && cfg.appCommand) {
+        if (cfg.phrase) pet.say(cfg.phrase);
+        if (this.onOpenApp) this.onOpenApp(cfg.appCommand, pet);
+      } else if (cfg.phrase) {
+        pet.say(cfg.phrase);
+      } else if (this.phrases.length) {
+        pet.say(pickRandom(this.phrases));
+      }
       return;
     }
     pet.dragTo(cx, cy);

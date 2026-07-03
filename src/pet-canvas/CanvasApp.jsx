@@ -51,7 +51,13 @@ export default function CanvasApp() {
     engine.onFrame = (pets, now) => {
       const active = pets
         .filter((p) => p.bubble && p.bubble.expires > now)
-        .map((p) => ({ id: p.id, text: p.bubble.text, x: p.x, y: p.y }));
+        .map((p) => ({
+          id: p.id,
+          text: p.bubble.text,
+          emote: !!p.bubble.emote,
+          x: p.x,
+          y: p.y,
+        }));
       setBubbles((prev) => {
         // Avoid re-render churn when nothing relevant changed.
         if (prev.length === 0 && active.length === 0) return prev;
@@ -88,6 +94,17 @@ export default function CanvasApp() {
       .then((list) => engine.setPhrases(list))
       .catch(() => engine.setPhrases(FALLBACK_PHRASES));
 
+    // "Open an app" / "launch Claude Code" click actions run through the
+    // backend; a failed launch turns into a speech bubble instead of silence.
+    engine.onOpenApp = (command, pet) =>
+      invoke("open_app", { command }).catch(() =>
+        pet?.say("I couldn't open that app 😢"),
+      );
+    engine.onLaunchClaude = (pet) =>
+      invoke("launch_claude").catch(() =>
+        pet?.say("I couldn't find Claude Code 😢"),
+      );
+
     // Load current settings, then spawn pets and start the loop.
     invoke("get_settings")
       .then((cfg) => {
@@ -95,7 +112,7 @@ export default function CanvasApp() {
       })
       .catch(() => {})
       .finally(() => {
-        engine.syncPets(getSettings().count || 1);
+        engine.syncPets(getSettings().pets);
         engine.start();
         // Ask backend for an initial icon + floor snapshot.
         invoke("rescan_icons").catch(() => {});
@@ -130,7 +147,7 @@ export default function CanvasApp() {
       }),
       listen("settings_updated", ({ payload }) => {
         setSettings(payload);
-        engine.syncPets(getSettings().count || 1);
+        engine.syncPets(getSettings().pets);
         rebuildPlatforms(); // iconRole / useIconsAsPlatforms may have changed
       }),
       listen("pet_mouse_down", ({ payload }) => {
@@ -172,20 +189,34 @@ export default function CanvasApp() {
         className="fixed inset-0"
         style={{ imageRendering: "pixelated" }}
       />
-      {bubbles.map((b) => (
-        <div
-          key={b.id}
-          className="absolute rounded-2xl bg-white px-3 py-2 text-sm text-gray-800 shadow-lg
-                     max-w-[180px] after:absolute after:left-4 after:-bottom-2 after:border-8
-                     after:border-transparent after:border-t-white after:content-['']"
-          style={{
-            left: Math.max(4, Math.min(b.x, window.innerWidth - 190)),
-            top: Math.max(4, b.y - 56),
-          }}
-        >
-          {b.text}
-        </div>
-      ))}
+      {bubbles.map((b) =>
+        b.emote ? (
+          // Hover reaction: a compact emote badge instead of a speech bubble.
+          <div
+            key={b.id}
+            className="absolute rounded-full bg-white px-2.5 py-1 text-base font-bold text-gray-700 shadow-lg"
+            style={{
+              left: Math.max(4, Math.min(b.x + 20, window.innerWidth - 60)),
+              top: Math.max(4, b.y - 36),
+            }}
+          >
+            {b.text}
+          </div>
+        ) : (
+          <div
+            key={b.id}
+            className="absolute rounded-2xl bg-white px-3 py-2 text-sm text-gray-800 shadow-lg
+                       max-w-[180px] after:absolute after:left-4 after:-bottom-2 after:border-8
+                       after:border-transparent after:border-t-white after:content-['']"
+            style={{
+              left: Math.max(4, Math.min(b.x, window.innerWidth - 190)),
+              top: Math.max(4, b.y - 56),
+            }}
+          >
+            {b.text}
+          </div>
+        ),
+      )}
     </div>
   );
 }
