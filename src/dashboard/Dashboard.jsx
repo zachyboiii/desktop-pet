@@ -14,6 +14,8 @@ const PETS = [
   { type: "dog", color: "husky", label: "Dog (husky)" },
   { type: "slime", color: "green", label: "Slime (green)" },
   { type: "bunny", color: "white", label: "Bunny (white & grey)" },
+  { type: "shark", color: "blue", label: "Shark (trash collector)" },
+  { type: "pacman", color: "yellow", label: "Pac-Man (trash collector)" },
   { type: "sparky", color: "terracotta", label: "Sparky (Claude mascot)" },
 ];
 const ICON_ROLES = [
@@ -131,6 +133,13 @@ function PetRow({ pet, index, apps, expanded, onToggle, onChange, onRemove, canR
               ))}
             </select>
           </Field>
+
+          {(pet.petType === "shark" || pet.petType === "pacman") && (
+            <div className="rounded border border-sky-200 bg-sky-50 p-2 text-xs text-sky-700 sm:col-span-2">
+              {pet.petType === "shark" ? "🦈" : "🟡"} Trash collector: drag
+              &amp; drop files onto this pet to feed them to the Recycle Bin.
+            </div>
+          )}
 
           {isSparky ? (
             <Field label="On click">

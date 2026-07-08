@@ -1048,6 +1048,348 @@ function withSleepZsSlime(frames) {
 }
 
 // ---------------------------------------------------------------------------
+// Shark — the trash collector. Side-view swimmer with a pointed snout, tall
+// swept dorsal fin, crescent tail and a permanent toothy scowl. Its "jump"
+// row is a CHOMP cycle instead of a jump arc: the engine plays that row both
+// mid-air and when the shark is fed a file. Sharks don't sit, so the sit row
+// reuses the idle frames.
+// ---------------------------------------------------------------------------
+
+// Piecewise-linear body profile — keys [[x, y], ...] sorted by x.
+function lerpKeys(keys, x) {
+  for (let i = 0; i < keys.length - 1; i++) {
+    const [x0, y0] = keys[i];
+    const [x1, y1] = keys[i + 1];
+    if (x <= x1) return y0 + ((x - x0) / (x1 - x0)) * (y1 - y0);
+  }
+  return keys[keys.length - 1][1];
+}
+
+function sharkSide(g, o) {
+  // o: { bob, tailSway, mouth (0 closed, 1 open, 2 wide), lunge, blink,
+  //      lying, breath }
+  const bob = o.bob || 0;
+  const sway = o.tailSway || 0;
+  const mouth = o.mouth || 0;
+  const lunge = o.lunge || 0;
+
+  if (o.lying) {
+    // Sleeping flat on the seafloor (well, taskbar) — lean loaf, snout taper.
+    const ry = 3 + (o.breath || 0) * 0.5;
+    fillEllipse(g, 13, 29 - ry, 8, ry, BODY); // body loaf
+    for (let dx = 0; dx <= 7; dx++) {
+      const top = 25 + Math.round((dx / 7) * 3);
+      fillRect(g, 20 + dx, top, 1, 30 - top, BODY); // snout resting, tapering
+    }
+    thickLine(g, 5, 26, 2, 22, BODY); // tail lobes flopped
+    thickLine(g, 5, 27, 2, 29, BODY);
+    fillEllipse(g, 11, 24, 2, 1.6, BODY); // dorsal fin lying over
+    outlinePass(g);
+    shadePass(g);
+    paintOver(g, 18, 28, 4, 1.2, LIGHT); // belly sliver
+    fillRect(g, 21, 26, 2, 1, DARK); // closed eye
+    return;
+  }
+
+  const cy = 23 + bob; // body centerline
+  const L = lunge; // chomp dart shifts the whole fish forward
+
+  // torpedo profile — deepest at the shoulders, blunt rounded snout, narrow
+  // tail peduncle (proportions traced from the reference shark)
+  const topK = [[6, cy - 1.5], [10, cy - 3.5], [16, cy - 4.5], [22, cy - 3.5], [26, cy - 2.5], [29, cy - 1]];
+  const botK = [[6, cy + 1.5], [10, cy + 3.5], [16, cy + 4.5], [23, cy + 3.5], [27, cy + 2.5], [29, cy + 1.5]];
+  const topAt = (x) => Math.round(lerpKeys(topK, x - L));
+  const botAt = (x) => Math.round(lerpKeys(botK, x - L));
+
+  // chunky crescent caudal fin — solid column spans, concave trailing edge,
+  // big upper lobe / smaller lower lobe like the reference
+  const tailSpans = [
+    [7, -2, 2],
+    [6, -3, 3],
+    [5, -4, 4],
+    [4, -5, -1], [4, 1, 4],
+    [3, -6, -3], [3, 2, 5],
+    [2, -7, -5], [2, 4, 6],
+  ];
+  for (const [tx, a, b] of tailSpans) {
+    // vertical shear toward the tip — horizontal shifts would tear the
+    // 1px-wide columns apart at big sway values
+    const bend = Math.round((sway * (7 - tx)) / 5);
+    fillRect(g, tx + L, cy + a + bend, 1, b - a + 1, BODY);
+  }
+
+  // pectoral fin swept down and back
+  thickLine(g, 17 + L, cy + 3, 13 + L, cy + 6, BODY);
+  thickLine(g, 18 + L, cy + 3, 14 + L, cy + 6, BODY);
+
+  // body columns
+  if (mouth === 0) {
+    for (let x = 6 + L; x <= 29 + L; x++) {
+      fillRect(g, x, topAt(x), 1, botAt(x) - topAt(x) + 1, BODY);
+    }
+  } else {
+    // open jaws: body to the mouth corner, snout tilts up, slim jaw drops
+    for (let x = 6 + L; x <= 23 + L; x++) {
+      fillRect(g, x, topAt(x), 1, botAt(x) - topAt(x) + 1, BODY);
+    }
+    for (let x = 24 + L; x <= 29 + L; x++) {
+      const t = (x - 23 - L) / 6;
+      const raise = Math.round(mouth * 1.7 * t);
+      fillRect(g, x, topAt(x) - raise, 1, Math.max(2, 3 - Math.round(t)), BODY);
+    }
+    thickLine(g, 23 + L, cy + 2, 28 + L, cy + 3 + mouth, BODY);
+  }
+
+  // dorsal fin — modest swept triangle, tip trailing back
+  const finW = [2, 3, 5, 6];
+  for (let j = 0; j < 4; j++) fillRect(g, 12 + L, cy - 8 + j, finW[j], 1, BODY);
+
+  outlinePass(g);
+  shadePass(g);
+
+  // pale underside along the bottom two body rows, up to the jaw
+  const bellyEnd = mouth === 0 ? 27 + L : 23 + L;
+  for (let x = 8 + L; x <= bellyEnd; x++) {
+    const bot = botAt(x);
+    for (let y = bot - 2; y <= bot - 1; y++) {
+      const c = at(g, x, y);
+      if (c === BODY || c === SHADE) px(g, x, y, LIGHT);
+    }
+  }
+
+  if (mouth > 0) {
+    // maw: per column, fill the gap between the two outlined jaws, then hang
+    // alternating teeth off the upper (even x) and lower (odd x) jaw
+    for (let x = 24 + L; x <= 29 + L; x++) {
+      const lo = cy - 6;
+      const hi = cy + mouth + 6;
+      let a = lo;
+      while (a <= hi && at(g, x, a) === T) a++;
+      while (a <= hi && at(g, x, a) !== T) a++;
+      let b = hi;
+      while (b >= a && at(g, x, b) === T) b--;
+      while (b >= a && at(g, x, b) !== T) b--;
+      if (a > b) continue;
+      for (let y = a; y <= b; y++) if (at(g, x, y) === T) px(g, x, y, PINK);
+      // triangular fangs — longer near the wide front of the gape
+      const fang = b - a >= 4 ? 2 : 1;
+      if (x % 2 === 0) for (let k = 0; k < fang; k++) px(g, x, a + k, WHITE);
+      else for (let k = 0; k < fang; k++) px(g, x, b - k, WHITE);
+      // pale lower jaw under the maw, like the belly
+      for (let y = b + 1; y <= hi; y++) {
+        const c = at(g, x, y);
+        if (c === T) break;
+        if (c === BODY || c === SHADE) px(g, x, y, LIGHT);
+      }
+    }
+  } else {
+    // closed scowl — 2px dark mouth band along the jaw with bared teeth
+    for (let x = 23 + L; x <= 28 + L; x++) {
+      const y = botAt(x) - 2;
+      if (at(g, x, y) !== T) px(g, x, y, OUT);
+      if (at(g, x, y + 1) !== T) px(g, x, y + 1, x % 2 === 0 ? WHITE : OUT);
+    }
+  }
+
+  // gill slits
+  for (const gx of [19 + L, 21 + L]) {
+    px(g, gx, cy - 1, OUT);
+    px(g, gx, cy, OUT);
+    px(g, gx, cy + 1, OUT);
+  }
+
+  // fierce eye tucked under the brow line, with an angled brow kink
+  const ey = mouth > 0 ? cy - 3 : cy - 2;
+  if (o.blink) {
+    fillRect(g, 24 + L, ey + 1, 2, 1, DARK);
+  } else {
+    fillRect(g, 24 + L, ey, 2, 2, DARK);
+    px(g, 24 + L, ey, WHITE); // glint at the back-top corner
+  }
+  px(g, 25 + L, ey, OUT); // brow slants down toward the snout
+}
+
+function sharkFront(g, o) {
+  // "look at you" pose — big head, both eyes, toothy grin, flapping fins.
+  const hb = o.headBob || 0;
+  const wag = o.wag || 0;
+  const hy = 13 + hb;
+  for (let j = 0; j < 4; j++) fillRect(g, 15, 3 + hb + j, 2, 1, BODY); // dorsal fin peeking over
+  fillEllipse(g, 8.5, 24 + (wag > 0 ? 0 : 1), 2, 3, BODY); // side fins alternate flap
+  fillEllipse(g, 23.5, 24 + (wag > 0 ? 1 : 0), 2, 3, BODY);
+  fillEllipse(g, 16, 24.5, 6, 4.5, BODY); // body
+  fillEllipse(g, 16, hy, 7.5, 7, BODY); // big head
+  outlinePass(g);
+  shadePass(g);
+  paintOver(g, 16, 26, 3.5, 2, LIGHT); // belly
+  if (o.blink) {
+    fillRect(g, 12, hy - 1, 2, 1, DARK);
+    fillRect(g, 19, hy - 1, 2, 1, DARK);
+  } else {
+    fillRect(g, 12, hy - 1.5, 2, 2, DARK);
+    fillRect(g, 19, hy - 1.5, 2, 2, DARK);
+    px(g, 13, hy - 1.5, WHITE); // Highlights aligned to the top-right
+    px(g, 20, hy - 1.5, WHITE);
+  }
+  // angry brows angled in over the eyes
+  fillRect(g, 11, hy - 3, 2, 1, OUT);
+  px(g, 13, hy - 2, OUT);
+  fillRect(g, 20, hy - 3, 2, 1, OUT);
+  px(g, 19, hy - 2, OUT);
+  // wide grin full of teeth
+  const mh = o.grin ? 3 : 1;
+  fillRect(g, 12, hy + 3, 9, mh, DARK);
+  if (o.grin) {
+    for (let x = 12; x <= 20; x += 2) px(g, x, hy + 3, WHITE);
+  }
+}
+
+function sharkFrames() {
+  const side = wrap(sharkSide);
+  const front = wrap(sharkFront);
+  const idle = S8((i) =>
+    side({
+      bob: i >= 3 && i <= 6 ? 1 : 0,
+      tailSway: wave(i, 1.5),
+      blink: i === 6,
+    }),
+  );
+  return {
+    idle,
+    // swim: body glides with a strong tail beat
+    walk: S8((i) =>
+      side({
+        bob: Math.abs(wave(i, 1, Math.PI / 2)),
+        tailSway: wave(i, 2.5),
+      }),
+    ),
+    sit: idle, // sharks don't sit — the engine's SIT state just shows idle
+    sleep: S8((i) => side({ lying: true, breath: i >= 4 ? 1 : 0 })),
+    // CHOMP — this species' jump row: open wide, lunge, snap shut.
+    jump: [
+      side({ mouth: 0 }),
+      side({ mouth: 1 }),
+      side({ mouth: 2, lunge: 1 }),
+      side({ mouth: 2, lunge: 2, bob: -1 }),
+      side({ mouth: 2, lunge: 2, bob: -1 }),
+      side({ mouth: 1, lunge: 1 }),
+      side({ mouth: 0, bob: 1 }), // snap!
+      side({ mouth: 0 }),
+    ],
+    look: S8((i) =>
+      front({
+        wag: i % 2 === 0 ? 1 : -1,
+        headBob: i >= 4 ? 1 : 0,
+        blink: i === 6,
+        grin: true,
+      }),
+    ),
+  };
+}
+
+// ---------------------------------------------------------------------------
+// Pac-Man — the other trash collector. A yellow disc whose mouth is a carved
+// transparent wedge, like the arcade original. Same row contract as the
+// shark: the "jump" row is a CHOMP cycle (played mid-air and when fed a
+// file), and the sit row reuses idle.
+// ---------------------------------------------------------------------------
+
+function pacmanBody(g, o) {
+  // o: { mouth (0..1 wedge slope), bob, lunge, blink, lying, breath }
+  const bob = o.bob || 0;
+  const L = o.lunge || 0;
+
+  if (o.lying) {
+    // Sleeping: the disc deflates into a flat bun on the ground.
+    const ry = 6.5 + (o.breath || 0) * 0.5;
+    fillEllipse(g, 16, 29 - ry, 10.5, ry, BODY);
+    outlinePass(g);
+    shadePass(g);
+    paintOver(g, 12, 29 - ry * 1.4, 2.5, 2, LIGHT); // sheen
+    fillRect(g, 19, 25, 2, 1, DARK); // closed eye
+    px(g, 21, 27, OUT); // tiny sleeping smile
+    px(g, 22, 27, OUT);
+    return;
+  }
+
+  const cx = 16 + L; // chomp dart shifts the disc forward
+  const cy = 19 + bob; // disc bottom rests on the 29px baseline
+  fillEllipse(g, cx, cy, 10, 10, BODY);
+
+  // mouth: transparent wedge carved out toward the right, apex at the center
+  const s = o.mouth ?? 0.2;
+  if (s > 0) {
+    for (let dx = 1; dx <= 11; dx++) {
+      const h = Math.round(dx * s);
+      for (let dy = -h; dy <= h; dy++) px(g, cx + dx, cy + dy, T);
+    }
+  }
+
+  outlinePass(g);
+  shadePass(g);
+  if (s <= 0) {
+    // shut mouth still reads as a mouth: seam line where the wedge closes
+    for (let dx = 1; dx <= 9; dx++) px(g, cx + dx, cy, OUT);
+  }
+  paintOver(g, cx - 4, cy - 4, 2.5, 2.5, LIGHT); // glossy sheen
+
+  // eye above the mouth
+  if (o.blink) {
+    fillRect(g, cx + 2, cy - 5, 2, 1, DARK);
+  } else {
+    fillRect(g, cx + 2, cy - 6, 2, 2, DARK);
+    px(g, cx + 2, cy - 6, WHITE);
+  }
+}
+
+function pacmanFront(g, o) {
+  // "look at you" pose — full disc, both eyes, big grin.
+  const cy = 19 + (o.headBob || 0);
+  fillEllipse(g, 16, cy, 10, 10, BODY);
+  outlinePass(g);
+  shadePass(g);
+  paintOver(g, 12, cy - 4, 2.5, 2.5, LIGHT); // sheen
+  if (o.blink) {
+    fillRect(g, 12, cy - 4, 2, 1, DARK);
+    fillRect(g, 19, cy - 4, 2, 1, DARK);
+  } else {
+    fillRect(g, 12, cy - 5, 2, 2, DARK);
+    fillRect(g, 19, cy - 5, 2, 2, DARK);
+    px(g, 12, cy - 5, WHITE);
+    px(g, 19, cy - 5, WHITE);
+  }
+  // big open grin
+  paintOver(g, 16, cy + 3.5, o.grin ? 4 : 3, o.grin ? 2.4 : 1.4, DARK);
+}
+
+function pacmanFrames() {
+  const body = wrap(pacmanBody);
+  const front = wrap(pacmanFront);
+  // waka cycle snaps fully shut at both ends so the mouth ends up closed
+  const waka = [0, 0.3, 0.6, 0.9, 0.9, 0.6, 0.3, 0];
+  // idle chomps too — same waka-waka cycle whether moving or standing still
+  const idle = S8((i) => body({ mouth: waka[i], bob: i % 4 >= 2 ? 1 : 0 }));
+  return {
+    idle,
+    walk: idle,
+    sit: idle, // discs don't sit — the engine's SIT state just shows idle
+    sleep: S8((i) => body({ lying: true, breath: i >= 4 ? 1 : 0 })),
+    // CHOMP — jump row: gape wide, lunge, snap shut
+    jump: [
+      body({ mouth: 0.2 }),
+      body({ mouth: 0.55 }),
+      body({ mouth: 0.9, lunge: 1 }),
+      body({ mouth: 0.9, lunge: 2, bob: -1 }),
+      body({ mouth: 0.9, lunge: 2, bob: -1 }),
+      body({ mouth: 0.55, lunge: 1 }),
+      body({ mouth: 0.05, bob: 1 }), // snap!
+      body({ mouth: 0.2 }),
+    ],
+    look: S8((i) => front({ headBob: i >= 4 ? 1 : 0, blink: i === 6, grin: true })),
+  };
+}
+
+// ---------------------------------------------------------------------------
 // Sheet assembly
 // ---------------------------------------------------------------------------
 const ROW_ORDER = ["idle", "walk", "sit", "sleep", "jump", "look"];
@@ -1177,6 +1519,23 @@ writeFileSync(
   composeSheet(sparkyFrames(), SPARKY_PALETTE),
 );
 
+// Shark: steel-blue trash collector with a pale belly. Its jump row is a
+// chomp cycle (played mid-air and whenever it's fed a file to trash).
+const SHARK_PALETTE = makePalette("#12161f", "#4e5a6e", "#cdd2da", "#3a4453", "#c8281e");
+SHARK_PALETTE[PINK] = hex("#54232a"); // maw is a dark maroon gullet, not blush pink
+writeFileSync(
+  join(OUT_DIR, "shark_blue.png"),
+  composeSheet(withSleepZs(sharkFrames()), SHARK_PALETTE),
+);
+
+// Pac-Man: arcade yellow with a dark outline; the mouth wedge is transparent
+// so the chomp reads exactly like the original sprite.
+const PACMAN_PALETTE = makePalette("#3d2e04", "#ffd23e", "#ffe98a", "#d9a41e", "#c8281e");
+writeFileSync(
+  join(OUT_DIR, "pacman_yellow.png"),
+  composeSheet(withSleepZs(pacmanFrames()), PACMAN_PALETTE),
+);
+
 console.log(
   "Wrote",
   [
@@ -1184,6 +1543,8 @@ console.log(
     "slime_green.png",
     "bunny_white.png",
     "sparky_terracotta.png",
+    "shark_blue.png",
+    "pacman_yellow.png",
   ].join(", "),
   "to",
   OUT_DIR,

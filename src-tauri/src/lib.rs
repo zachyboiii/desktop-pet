@@ -309,6 +309,16 @@ fn launch_claude() -> Result<(), String> {
     Ok(())
 }
 
+// Move dropped files to the OS trash / Recycle Bin — the shark pet's
+// "feed it a file" action. Recoverable by design: never a permanent delete.
+#[tauri::command]
+fn trash_files(paths: Vec<String>) -> Result<(), String> {
+    if paths.is_empty() {
+        return Err("nothing to trash".into());
+    }
+    trash::delete_all(&paths).map_err(|e| e.to_string())
+}
+
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
@@ -437,8 +447,20 @@ pub fn run() {
             if let Some(pet) = app.get_webview_window("pet-window") {
                 let _ = pet.set_ignore_cursor_events(true);
                 #[cfg(windows)]
-                if let Ok(hwnd) = pet.hwnd() {
-                    os::set_pet_hwnd(hwnd.0 as isize);
+                {
+                    // Explicitly size/position to the primary monitor's full
+                    // bounds instead of trusting the `maximized` config flag:
+                    // Win32 "maximize" on an undecorated window can settle to
+                    // either the monitor's full rect or its work area
+                    // depending on build/timing, and any mismatch with (0,0)
+                    // origin throws off every screen<->CSS pixel conversion
+                    // downstream (e.g. the taskbar floor calc).
+                    let (mx, my, mw, mh) = os::primary_monitor_rect();
+                    let _ = pet.set_position(tauri::PhysicalPosition::new(mx, my));
+                    let _ = pet.set_size(tauri::PhysicalSize::new(mw as u32, mh as u32));
+                    if let Ok(hwnd) = pet.hwnd() {
+                        os::set_pet_hwnd(hwnd.0 as isize);
+                    }
                 }
                 let _ = pet.show();
             }
@@ -484,6 +506,7 @@ pub fn run() {
             open_app,
             list_apps,
             launch_claude,
+            trash_files,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

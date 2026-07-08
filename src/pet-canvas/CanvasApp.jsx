@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { listen } from "@tauri-apps/api/event";
 import { invoke } from "@tauri-apps/api/core";
 import { getCurrentWindow } from "@tauri-apps/api/window";
+import { getCurrentWebview } from "@tauri-apps/api/webview";
 import {
   PetEngine,
   buildPlatforms,
@@ -167,6 +168,23 @@ export default function CanvasApp() {
         const [cx, cy] = toCss(payload);
         engine.handleMouseUp(cx, cy);
         setCursor(engine.getCursorForPoint(cx, cy));
+      }),
+      // Feeding the shark: dropping files from Explorer onto it sends them to
+      // the Recycle Bin. The Rust mouse hook already flips the overlay to
+      // interactive while the cursor is over a pet, which is what lets the
+      // OS drag reach this webview at all — drops anywhere else pass through.
+      getCurrentWebview().onDragDropEvent((event) => {
+        if (event.payload.type !== "drop") return;
+        const paths = event.payload.paths || [];
+        const [cx, cy] = toCss(event.payload.position);
+        const shark = engine.getTrashPetAt(cx, cy);
+        if (!shark || paths.length === 0) return;
+        invoke("trash_files", { paths })
+          .then(() => {
+            shark.chomp(performance.now());
+            shark.say(paths.length > 1 ? `${paths.length} files trashed` : "File trashed");
+          })
+          .catch(() => shark.say("I couldn't eat that 😖"));
       }),
     );
 

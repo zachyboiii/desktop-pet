@@ -286,6 +286,26 @@ pub fn work_area_bottom() -> i32 {
     unsafe { GetSystemMetrics(SM_CYSCREEN) - 48 }
 }
 
+// Full (non-work-area) bounds of the primary monitor, in physical pixels:
+// (left, top, width, height). The pet window is explicitly positioned/sized
+// to this rect at startup so the webview's CSS-pixel origin (0,0) always
+// lines up with screen (0,0) — Tauri's `maximized: true` config flag alone
+// doesn't guarantee that alignment across dev vs. packaged builds.
+pub fn primary_monitor_rect() -> (i32, i32, i32, i32) {
+    unsafe {
+        let monitor = MonitorFromPoint(POINT { x: 0, y: 0 }, MONITOR_DEFAULTTOPRIMARY);
+        let mut info = MONITORINFO {
+            cbSize: std::mem::size_of::<MONITORINFO>() as u32,
+            ..Default::default()
+        };
+        if GetMonitorInfoW(monitor, &mut info).as_bool() {
+            let r = info.rcMonitor;
+            return (r.left, r.top, r.right - r.left, r.bottom - r.top);
+        }
+        (0, 0, GetSystemMetrics(SM_CXSCREEN), GetSystemMetrics(SM_CYSCREEN))
+    }
+}
+
 // ---------------------------------------------------------------------------
 // Global low-level mouse hook -> forward presses/drags that land on a pet.
 //

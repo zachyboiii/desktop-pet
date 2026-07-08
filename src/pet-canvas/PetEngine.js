@@ -191,8 +191,14 @@ const DEFAULT_ANIM = {
   sit: { row: 2, totalFrames: 8, startFrame: 0, loop: true, frameDelay: 11 },
   sleep: { row: 3, totalFrames: 8, startFrame: 0, loop: true, frameDelay: 16 },
   jump: { row: 4, totalFrames: 8, startFrame: 0, loop: false, frameDelay: 5 },
+  // Feeding reaction (trash collectors): plays the row-4 chomp cycle on a
+  // timer instead of the jump row's vy-driven frame mapping.
+  chomp: { row: 4, totalFrames: 8, startFrame: 0, loop: true, frameDelay: 4 },
   look: { row: 5, totalFrames: 8, startFrame: 0, loop: true, frameDelay: 8 },
 };
+
+// Pet types that eat file drops (see getTrashPetAt / the canvas drop handler).
+const TRASH_PET_TYPES = new Set(["shark", "pacman"]);
 
 function animMapFor() {
   return DEFAULT_ANIM;
@@ -212,6 +218,8 @@ function animForState(state) {
     case "FALLING":
     case "DRAGGING": // vy is 0 while held, so this shows the mid-air float pose
       return "jump";
+    case "CHOMP":
+      return "chomp";
     case "LOOKING":
       return "look";
     case "IDLE":
@@ -284,6 +292,7 @@ export class DesktopPet {
     // AI / interaction timers (ms, performance.now based)
     this.nextDecisionAt = performance.now() + rand(800, 2000);
     this.lookUntil = 0;
+    this.chompUntil = 0;
     this.bubble = null; // { text, expires, emote? }
     this.nextEmoteAt = 0; // hover-emote cooldown
   }
@@ -380,6 +389,13 @@ export class DesktopPet {
     this.bubble = { text, expires: performance.now() + 3500 };
   }
 
+  // Feeding reaction: stop and play the chomp cycle for a couple of loops.
+  chomp(now) {
+    this.state = "CHOMP";
+    this.vy = 0;
+    this.chompUntil = now + 1400;
+  }
+
   // Hovering (no click): flash a little emote and, when not busy walking or
   // airborne, turn to face the cursor. Rate-limited per pet.
   emoteAtCursor(cursorX, now) {
@@ -438,6 +454,7 @@ export class DesktopPet {
   decideNextAction(now) {
     if (this.state === "DRAGGING") return;
     if (this.state === "LOOKING" && now < this.lookUntil) return;
+    if (this.state === "CHOMP" && now < this.chompUntil) return;
     if (this.state === "FALLING" || this.state === "JUMPING") return;
     if (now < this.nextDecisionAt) return;
 
@@ -509,6 +526,11 @@ export class DesktopPet {
       if (now >= this.lookUntil) {
         this.state = "IDLE";
         this.nextDecisionAt = now;
+      }
+    } else if (this.state === "CHOMP") {
+      if (now >= this.chompUntil) {
+        this.state = "IDLE";
+        this.nextDecisionAt = now + rand(800, 2000);
       }
     } else {
       // IDLE / SIT / SLEEP — make sure gravity still glues us to the ground if
@@ -663,6 +685,26 @@ export class PetEngine {
   getCursorForPoint(cx, cy) {
     if (this.draggedPet) return "grabbing";
     return this.getTopmostPetAt(cx, cy) ? "pointer" : "default";
+  }
+
+  // Topmost trash-collector pet under a file-drop point. Drops are coarser
+  // than clicks, so allow a margin around the visible pixels.
+  getTrashPetAt(cx, cy) {
+    const MARGIN = 24;
+    for (let i = this.pets.length - 1; i >= 0; i--) {
+      const pet = this.pets[i];
+      if (!TRASH_PET_TYPES.has(pet.config?.petType)) continue;
+      const r = pet.visibleRect();
+      if (
+        cx >= r.x - MARGIN &&
+        cx <= r.x + r.w + MARGIN &&
+        cy >= r.y - MARGIN &&
+        cy <= r.y + r.h + MARGIN
+      ) {
+        return pet;
+      }
+    }
+    return null;
   }
 
   // Reconcile the live pets against the configured roster. Matching by config
